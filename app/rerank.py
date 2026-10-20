@@ -44,9 +44,11 @@ class RerankConfig:
     enabled: bool = False
     url: str = field(default="", repr=False)
     model: str = field(default="", repr=False)
-    timeout_seconds: float = 30.0
+    timeout_seconds: float = 10.0
     retries: int = 2
     batch_size: int = 64
+    failure_threshold: int = 3
+    cooldown_seconds: float = 60.0
     api_key_env: str = field(default="", repr=False)
 
     @classmethod
@@ -71,6 +73,12 @@ class RerankConfig:
             ),
             retries=_require_int(raw.get("retries", 2), "retries", 1),
             batch_size=_require_int(raw.get("batch_size", 64), "batch_size", 1),
+            failure_threshold=_require_int(
+                raw.get("failure_threshold", 3), "failure_threshold", 1
+            ),
+            cooldown_seconds=_require_number(
+                raw.get("cooldown_seconds", 60.0), "cooldown_seconds", 0.0
+            ),
             api_key_env=api_key_env.strip(),
         )
 
@@ -100,6 +108,8 @@ class RerankClient:
         self.config = config
         self.model = config.model
         self._api_key: str | None = None
+        self._failures = 0
+        self._open_until = 0.0
         if config.api_key_env:
             value = os.environ.get(config.api_key_env)
             if not value:
@@ -112,6 +122,8 @@ class RerankClient:
     def rerank(self, query: str, documents: Sequence[str]) -> list[float]:
         if not documents:
             return []
+        if time.time() < self._open_until:
+            raise RerankError("rerank circuit is open")
         scores: list[float] = [0.0] * len(documents)
         batch = max(1, self.config.batch_size)
         for start in range(0, len(documents), batch):
@@ -121,7 +133,14 @@ class RerankClient:
                 raise RerankError("rerank service returned an invalid result")
             for offset, value in enumerate(values):
                 scores[start + offset] = value
+        self._failures = 0
         return scores
+
+    def _trip(self) -> None:
+        self._failures += 1
+        if self._failures >= self.config.failure_threshold:
+            self._open_until = time.time() + self.config.cooldown_seconds
+            self._failures = 0
 
     def _request(self, query: str, documents: Sequence[str]) -> list[float]:
         payload = json.dumps(
@@ -153,6 +172,7 @@ class RerankClient:
                 last_error = exc
             if attempt + 1 < self.config.retries:
                 time.sleep(0.2 * (attempt + 1))
+        self._trip()
         raise RerankError(f"rerank request failed: {last_error}")
 
     def _headers(self) -> dict[str, str]:

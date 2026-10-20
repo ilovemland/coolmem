@@ -73,6 +73,7 @@ Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任�
 - `enabled`：`true` 时对检索候选做精排；配置缺失或 `false` 时保持纯 RRF 排序。
 - `url` / `model`：完整 `/v1/rerank` 地址与模型名，只放本地文件。
 - `timeout_seconds` / `retries` / `batch_size`：HTTP 超时、重试与单次请求的文档条数。
+- `failure_threshold` / `cooldown_seconds`：连续失败几次后熔断、熔断多久（默认 3 次 / 60 秒）；熔断期间 `/search` 直接走纯 RRF，不再等待精排。
 - `api_key_env`：可选，填环境变量名。
 
 精排失败（服务不可达、返回结构不符）时**自动降级为原排序**，`/search` 不会因此失败。精排深度、混合权重与文档截断由 `Policy` 的 `rerank_depth` / `rerank_blend` / `rerank_doc_chars` 控制（默认 200 / 1.0 / 2400）；`rerank_blend=1.0` 表示完全按精排分数排序。

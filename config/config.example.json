@@ -18,8 +18,10 @@
     "enabled": false,
     "url": "http://<host>:<port>/v1/rerank",
     "model": "<rerank-model-name>",
-    "timeout_seconds": 30,
+    "timeout_seconds": 10,
     "retries": 2,
-    "batch_size": 64
+    "batch_size": 64,
+    "failure_threshold": 3,
+    "cooldown_seconds": 60
   }
 }
