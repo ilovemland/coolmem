@@ -30,7 +30,7 @@ class Policy:
     lane_gating: bool = False
     instruction_decomposition: bool = True
     context_window_turns: int = 0
-    neighbor_message_chars: int = 200
+    neighbor_message_chars: int = 0
     neighbor_skip_chars: int = 640
     neighbor_top_n: int = 0
     rerank_enabled: bool = True

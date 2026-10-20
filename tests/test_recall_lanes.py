@@ -50,7 +50,7 @@ class GatingTest(unittest.TestCase):
         self.assertFalse(policy.lane_gating)
         self.assertTrue(policy.instruction_decomposition)
         self.assertEqual(policy.context_window_turns, 0)
-        self.assertEqual(policy.neighbor_message_chars, 200)
+        self.assertEqual(policy.neighbor_message_chars, 0)
         self.assertTrue(policy.rerank_enabled)
 
     def test_lanes(self) -> None:
