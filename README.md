@@ -66,6 +66,19 @@ chmod 600 env
 
 Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任何消息或向量；`/search` 返回 503；不会退化为纯词法。错误响应不包含 query、message、URL 或模板。
 
+### Rerank（可选，默认关闭）
+
+`config/config.local.json` 的 `rerank` 段接一个 cross-encoder 精排服务（llama.cpp `--reranking` 的 `/v1/rerank`、OpenRouter 的 `/rerank` 都兼容）：
+
+- `enabled`：`true` 时对检索候选做精排；配置缺失或 `false` 时保持纯 RRF 排序。
+- `url` / `model`：完整 `/v1/rerank` 地址与模型名，只放本地文件。
+- `timeout_seconds` / `retries` / `batch_size`：HTTP 超时、重试与单次请求的文档条数。
+- `api_key_env`：可选，填环境变量名。
+
+精排失败（服务不可达、返回结构不符）时**自动降级为原排序**，`/search` 不会因此失败。精排深度、混合权重与文档截断由 `Policy` 的 `rerank_depth` / `rerank_blend` / `rerank_doc_chars` 控制（默认 200 / 1.0 / 2400）；`rerank_blend=1.0` 表示完全按精排分数排序。
+
+返回正文的邻居扩展由 `Policy.neighbor_message_chars`（默认 200）控制：命中条目会附带同 session 前一条的尾部与后一条的头部各 200 字符，邻居超过 `neighbor_skip_chars`（默认 640）时跳过。它只改返回正文，不改索引与排序。
+
 ## 启动
 
 ```bash

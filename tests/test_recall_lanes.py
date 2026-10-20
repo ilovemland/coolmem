@@ -49,7 +49,9 @@ class GatingTest(unittest.TestCase):
         policy = Policy()
         self.assertFalse(policy.lane_gating)
         self.assertTrue(policy.instruction_decomposition)
-        self.assertEqual(policy.context_window_turns, 2)
+        self.assertEqual(policy.context_window_turns, 0)
+        self.assertEqual(policy.neighbor_message_chars, 200)
+        self.assertTrue(policy.rerank_enabled)
 
     def test_lanes(self) -> None:
         cases = {
@@ -264,7 +266,8 @@ class DilateTest(unittest.TestCase):
                 content="m1",
                 created_at="2026-01-01T00:00:00Z",
             )
-            dilated = repo._dilate("u", [SearchHit(middle, 1.0)])
+            windowed = MessageRepository(database, Policy(context_window_turns=2), retrievers=[])
+            dilated = windowed._dilate("u", [SearchHit(middle, 1.0)])
             self.assertEqual(dilated[0].message.content, "m0\nm1\nm2")
             off = MessageRepository(database, Policy(context_window_turns=0), retrievers=[])
             kept = off._dilate("u", [SearchHit(middle, 1.0)])

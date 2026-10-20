@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import heapq
+import math
 import sqlite3
 from collections import defaultdict
 from collections.abc import Sequence
@@ -8,6 +9,7 @@ from dataclasses import dataclass, replace
 
 from app.embedding import blob_to_vector, vector_to_blob
 from app.errors import PayloadConflict
+from app.rerank import RerankClient as Reranker, RerankError
 from app.gating import DENSE, HYBRID, LITERAL, core_query, profile_query
 from app.normalize import expanded_text
 from app.query import clip_query
@@ -26,6 +28,24 @@ from app.retrieval import (
 )
 from app.storage.database import Database
 from app.text import utc_now
+
+
+def _snap_prefix(text: str) -> str:
+    if not text:
+        return text
+    for index, char in enumerate(text):
+        if char.isspace() and index + 1 < len(text):
+            return text[index + 1 :]
+    return text
+
+
+def _snap_suffix(text: str) -> str:
+    if not text:
+        return text
+    for index in range(len(text) - 1, -1, -1):
+        if text[index].isspace() and index > 0:
+            return text[:index]
+    return text
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,9 +75,11 @@ class MessageRepository:
         policy: Policy,
         retrievers: Sequence[Retriever] | None = None,
         embedding: QueryEmbedder | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
         self._db = database
         self._policy = policy
+        self._reranker = reranker
         if retrievers is None:
             if embedding is None:
                 raise ValueError("embedding is required")
@@ -271,16 +293,119 @@ class MessageRepository:
 
     def search(self, *, user_id: str, query: str, limit: int) -> list[SearchHit]:
         query = clip_query(query, self._query_limit())
-        hits = self._search_once(user_id=user_id, query=query, limit=limit)
-        if not self._policy.instruction_decomposition:
-            return self._dilate(user_id, hits)
-        core = core_query(query, self._policy.gate)
-        if core is None or core == query:
-            return self._dilate(user_id, hits)
-        core_hits = self._search_once(user_id=user_id, query=core, limit=limit)
-        if not hits or not core_hits:
-            return self._dilate(user_id, hits or core_hits)
-        return self._dilate(user_id, self._merge(hits, core_hits, limit))
+        pool = limit
+        if self._policy.rerank_enabled:
+            depth = max(1, int(self._policy.rerank_depth))
+            if limit >= max(1, depth // 4):
+                pool = max(limit, depth)
+        hits = self._search_once(user_id=user_id, query=query, limit=pool)
+        if self._policy.instruction_decomposition:
+            core = core_query(query, self._policy.gate)
+            if core is not None and core != query:
+                core_hits = self._search_once(user_id=user_id, query=core, limit=pool)
+                if hits and core_hits:
+                    hits = self._merge(hits, core_hits, pool)
+                elif core_hits:
+                    hits = core_hits
+        hits = self._rerank(query, hits, core_query(query, self._policy.gate))
+        hits = hits[:limit]
+        hits = self._expand_neighbors(user_id, hits)
+        return self._dilate(user_id, hits)
+
+    def _rerank(
+        self, query: str, hits: Sequence[SearchHit], core: str | None = None
+    ) -> list[SearchHit]:
+        if not self._policy.rerank_enabled or self._reranker is None or not hits:
+            return list(hits)
+        depth = min(len(hits), max(1, int(self._policy.rerank_depth)))
+        head = list(hits[:depth])
+        tail = list(hits[depth:])
+        limit_chars = max(0, int(self._policy.rerank_doc_chars))
+        documents = [
+            hit.message.content[:limit_chars] if limit_chars else hit.message.content
+            for hit in head
+        ]
+        target = core or query
+        try:
+            raw = self._reranker.rerank(target, documents)
+        except RerankError:
+            return list(hits)
+        if len(raw) != len(head):
+            return list(hits)
+        weights = [1.0 / (1.0 + math.exp(-max(-40.0, min(40.0, value)))) for value in raw]
+        blend = max(0.0, min(1.0, float(self._policy.rerank_blend)))
+        if blend >= 1.0:
+            order = sorted(
+                range(len(head)),
+                key=lambda index: (-weights[index], head[index].message.id),
+            )
+            head = [
+                SearchHit(message=head[index].message, score=weights[index])
+                for index in order
+            ]
+        else:
+            base = [hit.score for hit in head]
+            low, high = min(base), max(base)
+            span = (high - low) or 1.0
+            scored = []
+            for index, hit in enumerate(head):
+                normalised = (hit.score - low) / span
+                final = (1.0 - blend) * normalised + blend * weights[index]
+                scored.append((final, hit.message.id, hit))
+            scored.sort(key=lambda item: (-item[0], item[1]))
+            head = [
+                SearchHit(message=hit.message, score=final)
+                for final, _, hit in scored
+            ]
+        return head + tail
+
+    def _expand_neighbors(
+        self, user_id: str, hits: Sequence[SearchHit]
+    ) -> list[SearchHit]:
+        limit = int(self._policy.neighbor_message_chars)
+        if limit <= 0 or not hits or self._db is None:
+            return list(hits)
+        skip = max(1, int(self._policy.neighbor_skip_chars))
+        grouped: dict[str, list[SearchHit]] = defaultdict(list)
+        for hit in hits:
+            grouped[hit.message.session_id].append(hit)
+        rows_by_session: dict[str, list[tuple[int, str]]] = {}
+        positions: dict[str, dict[int, int]] = {}
+        for session_id in grouped:
+            rows = self._db.connection().execute(
+                "SELECT id, content FROM messages "
+                "WHERE user_id = ? AND session_id = ? ORDER BY id",
+                (user_id, session_id),
+            ).fetchall()
+            rows_by_session[session_id] = [
+                (int(row["id"]), str(row["content"])) for row in rows
+            ]
+            positions[session_id] = {
+                message_id: position
+                for position, (message_id, _) in enumerate(rows_by_session[session_id])
+            }
+        expanded = []
+        for hit in hits:
+            session_rows = rows_by_session.get(hit.message.session_id, [])
+            index = positions.get(hit.message.session_id, {}).get(hit.message.id)
+            if index is None:
+                expanded.append(hit)
+                continue
+            parts: list[str] = []
+            if index > 0:
+                previous = session_rows[index - 1][1]
+                if len(previous) <= skip:
+                    parts.append(_snap_prefix(previous[-limit:]))
+            parts.append(hit.message.content)
+            if index + 1 < len(session_rows):
+                following = session_rows[index + 1][1]
+                if len(following) <= skip:
+                    parts.append(_snap_suffix(following[:limit]))
+            content = "\n".join(part for part in parts if part)
+            expanded.append(
+                SearchHit(message=replace(hit.message, content=content), score=hit.score)
+            )
+        return expanded
 
     def _dilate(self, user_id: str, hits: Sequence[SearchHit]) -> list[SearchHit]:
         turns = max(0, int(self._policy.context_window_turns))

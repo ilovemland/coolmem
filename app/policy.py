@@ -28,7 +28,13 @@ class Policy:
 
     lane_gating: bool = False
     instruction_decomposition: bool = True
-    context_window_turns: int = 2
+    context_window_turns: int = 0
+    neighbor_message_chars: int = 200
+    neighbor_skip_chars: int = 640
+    rerank_enabled: bool = True
+    rerank_depth: int = 200
+    rerank_blend: float = 1.0
+    rerank_doc_chars: int = 2400
     gate: GateConfig = field(default_factory=lambda: DEFAULT_GATE)
     dense_channel_weight: float = 1.0
     hybrid_lexical_weight: float = 8.0

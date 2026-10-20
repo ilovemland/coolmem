@@ -13,5 +13,13 @@
     "retries": 3,
     "api_key_env": "",
     "tiebreak_weight": 0.0
+  },
+  "rerank": {
+    "enabled": false,
+    "url": "http://<host>:<port>/v1/rerank",
+    "model": "<rerank-model-name>",
+    "timeout_seconds": 30,
+    "retries": 2,
+    "batch_size": 64
   }
 }
