@@ -1,0 +1,17 @@
+{
+  "embedding": {
+    "enabled": true,
+    "url": "http://<host>:<port>/v1/embeddings",
+    "model": "<model-name>",
+    "dimension": 0,
+    "query_template": "{query}",
+    "document_template": "{document}",
+    "batch_size": 10,
+    "batch_max_chars": 16000,
+    "max_input_chars": 12000,
+    "timeout_seconds": 60,
+    "retries": 3,
+    "api_key_env": "",
+    "tiebreak_weight": 0.0
+  }
+}
