@@ -37,6 +37,7 @@ class Policy:
     rerank_depth: int = 200
     rerank_blend: float = 1.0
     rerank_doc_chars: int = 2400
+    rerank_context: bool = False
     gate: GateConfig = field(default_factory=lambda: DEFAULT_GATE)
     dense_channel_weight: float = 1.0
     hybrid_lexical_weight: float = 8.0

@@ -307,9 +307,13 @@ class MessageRepository:
                     hits = self._merge(hits, core_hits, pool)
                 elif core_hits:
                     hits = core_hits
-        hits = self._rerank(query, hits, core_query(query, self._policy.gate))
+        core = core_query(query, self._policy.gate)
+        if self._policy.rerank_context:
+            hits = self._expand_neighbors(user_id, hits)
+        hits = self._rerank(query, hits, core)
         hits = hits[:limit]
-        hits = self._expand_neighbors(user_id, hits)
+        if not self._policy.rerank_context:
+            hits = self._expand_neighbors(user_id, hits)
         return self._dilate(user_id, hits)
 
     def _rerank(
