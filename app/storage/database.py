@@ -11,7 +11,7 @@ from pathlib import Path
 
 logger = logging.getLogger("uvicorn.error")
 
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 9
 
 _DDL_V1: tuple[str, ...] = (
     """
@@ -313,6 +313,16 @@ def _apply_v8(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+_DDL_V9: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (user_id, session_id, id)",
+)
+
+
+def _apply_v9(conn: sqlite3.Connection) -> None:
+    for statement in _DDL_V9:
+        conn.execute(statement)
+
+
 _MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _apply_v1,
     _apply_v2,
@@ -322,6 +332,7 @@ _MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _apply_v6,
     _apply_v7,
     _apply_v8,
+    _apply_v9,
 )
 
 
