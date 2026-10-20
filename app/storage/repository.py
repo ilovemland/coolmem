@@ -385,7 +385,11 @@ class MessageRepository:
                 for position, (message_id, _) in enumerate(rows_by_session[session_id])
             }
         expanded = []
-        for hit in hits:
+        top_n = max(0, int(self._policy.neighbor_top_n))
+        for position, hit in enumerate(hits):
+            if top_n and position >= top_n:
+                expanded.append(hit)
+                continue
             session_rows = rows_by_session.get(hit.message.session_id, [])
             index = positions.get(hit.message.session_id, {}).get(hit.message.id)
             if index is None:

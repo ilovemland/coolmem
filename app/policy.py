@@ -24,6 +24,7 @@ class Policy:
     neighbor_weight: float = 0.5
 
     coverage_weight: float = 2.0
+    rrf_k: int = 15
     bm25_tiebreak_weight: float = 0.02
 
     lane_gating: bool = False
@@ -31,6 +32,7 @@ class Policy:
     context_window_turns: int = 0
     neighbor_message_chars: int = 200
     neighbor_skip_chars: int = 640
+    neighbor_top_n: int = 0
     rerank_enabled: bool = True
     rerank_depth: int = 200
     rerank_blend: float = 1.0

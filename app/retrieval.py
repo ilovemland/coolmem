@@ -201,6 +201,7 @@ def fuse(
     scores: dict[int, float] = {}
     messages: dict[int, Message] = {}
     raw_by_retriever: dict[str, dict[int, float]] = {}
+    rrf_k = max(1, int(getattr(policy, "rrf_k", _RRF_K)))
     for result in results:
         channel_weight = 1.0 if weights is None else float(weights.get(result.name, 0.0))
         if channel_weight <= 0:
@@ -208,7 +209,7 @@ def fuse(
         raw_by_retriever[result.name] = {}
         for rank, hit in enumerate(result.hits, start=1):
             mid = hit.message.id
-            scores[mid] = scores.get(mid, 0.0) + channel_weight / (_RRF_K + rank)
+            scores[mid] = scores.get(mid, 0.0) + channel_weight / (rrf_k + rank)
             messages[mid] = hit.message
             raw_by_retriever[result.name][mid] = hit.raw
 
