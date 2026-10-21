@@ -10,7 +10,7 @@ from app.errors import Unavailable
 from app.gating import core_query, query_segments
 from app.policy import Policy
 from app.query import clip_query
-from app.retrieval import DenseRetriever, Message, RetrievalResult, ScoredHit, SearchHit, fuse
+from app.retrieval import DenseRetriever, Message, ScoredHit, SearchHit
 from app.services.add import AddService, IncomingMessage
 from app.services.search import SearchService
 from app.storage.database import Database

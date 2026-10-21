@@ -148,10 +148,9 @@ Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任�
 ## 检索实现
 
 - **写入**：原文先归一化（日期/数字等价写法、CJK 单字/双字/分词）写入 FTS；同一批 add 内前后各 3 条消息记为邻居文本，供词法通道的上下文列使用；消息与向量在同一事务写入。
-- **三路召回**：FTS5 BM25（`search_text` 1.0 / `nearby_text` 0.5 / `role` 0.2，先 AND 再 OR 补齐）、trigram 子串（深度 `top_k × 0.5`）、向量余弦（`user_id` + `space`，numpy 矩阵 + 按 user 缓存）。
+- **三路召回按配额合并**（`CHANNEL_QUOTAS = dense 0.80 / lexical 0.15 / substring 0.05`）：向量余弦（`user_id` + `space`，numpy 矩阵 + 按 user 缓存）占 80% 名额，FTS5 BM25（`search_text` 1.0 / `nearby_text` 0.5 / `role` 0.2，先 AND 再 OR 补齐）占 15%，trigram 子串（深度 `top_k × 0.5`）占 5%；同一条消息只收一次，某一路不足时由其余通道补齐。
 - **长 query**：超过 `MAX_QUERY_CHARS` 时抽问题行 + 首 40% / 尾 60% 生成检索副本；原文与返回不变。
 - **分段检索**：query 含空行分段时，取「整段 + 首段 + 末段」各检索一次，按 RRF 合并；单段 query 行为不变。
-- **融合**：等权 RRF（`1/(15+rank)`）+ 词覆盖率加成（2.0）+ BM25 归一化同分裁决（0.02）。
 - **精排**：融合后对前 `RERANK_DEPTH` 条打分（文档截断 `RERANK_DOC_CHARS`），按 sigmoid 分数重排并截到 `top_k`；同一 `(model+参数, query, 文档)` 的分数写缓存。精排失败或熔断时保持融合顺序。
 - **不回退**：embedding 不可用 → 503；dense 返回空就是空结果。
 - 所有阈值集中在 `app/policy.py` 的模块常量。

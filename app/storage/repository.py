@@ -17,6 +17,7 @@ from app.gating import core_query, query_segments
 from app.normalize import expanded_text
 from app.query import clip_query
 from app.policy import (
+    CHANNEL_QUOTAS,
     RERANK_DEPTH,
     RERANK_DOC_CHARS,
     SEARCH_CANDIDATES,
@@ -27,12 +28,10 @@ from app.retrieval import (
     LexicalRetriever,
     Message,
     QueryEmbedder,
-    RetrievalResult,
     Retriever,
     ScoredHit,
     SearchHit,
     SubstringRetriever,
-    fuse,
 )
 from app.storage.database import Database
 from app.text import utc_now
@@ -480,29 +479,40 @@ class MessageRepository:
         if not any(retriever.name == "dense" for retriever in self._retrievers):
             raise RuntimeError("dense retriever is required")
         candidates = max(limit, SEARCH_CANDIDATES)
-        results = [
-            self._retrieve(retriever, user_id, query, limit, candidates)
-            for retriever in self._retrievers
-        ]
-        return fuse(results, query=query, limit=limit)
-
-    def _retrieve(
-        self,
-        retriever: Retriever,
-        user_id: str,
-        query: str,
-        limit: int,
-        candidates: int,
-    ) -> RetrievalResult:
-        return RetrievalResult(
-            name=retriever.name,
-            hits=retriever.retrieve(
+        by_name = {retriever.name: retriever for retriever in self._retrievers}
+        merged: list[SearchHit] = []
+        seen: set[int] = set()
+        for name, share in CHANNEL_QUOTAS:
+            retriever = by_name.get(name)
+            if retriever is None or share <= 0:
+                continue
+            quota = max(1, int(round(limit * share)))
+            taken = 0
+            hits = retriever.retrieve(
                 user_id=user_id,
                 query=query,
                 limit=self._candidate_limit(retriever, limit, candidates),
-            ),
-            tiebreak_weight=retriever.tiebreak_weight,
-        )
+            )
+            for hit in hits:
+                if hit.message.id in seen:
+                    continue
+                merged.append(SearchHit(message=hit.message, score=hit.raw))
+                seen.add(hit.message.id)
+                taken += 1
+                if taken >= quota:
+                    break
+        if len(merged) < limit:
+            for retriever in self._retrievers:
+                if retriever.name in {name for name, _ in CHANNEL_QUOTAS}:
+                    continue
+                for hit in retriever.retrieve(user_id=user_id, query=query, limit=candidates):
+                    if hit.message.id in seen:
+                        continue
+                    merged.append(SearchHit(message=hit.message, score=hit.raw))
+                    seen.add(hit.message.id)
+                    if len(merged) >= limit:
+                        break
+        return merged[:limit]
 
     @staticmethod
     def _candidate_limit(retriever: Retriever, limit: int, candidates: int) -> int:

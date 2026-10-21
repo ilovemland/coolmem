@@ -6,14 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.policy import (
-    BM25_TIEBREAK_WEIGHT,
-    COVERAGE_WEIGHT,
-    NEARBY_WEIGHT,
-    RRF_K,
-    SEARCH_CANDIDATES,
-    SUBSTRING_DEPTH_RATIO,
-)
+from app.policy import NEARBY_WEIGHT, SEARCH_CANDIDATES, SUBSTRING_DEPTH_RATIO
 from app.storage.database import Database
 from app.text import cjk_bigrams, cjk_words, fts_query, terms, trigram_query
 
@@ -44,13 +37,6 @@ class ScoredHit:
 class SearchHit:
     message: Message
     score: float
-
-
-@dataclass(frozen=True, slots=True)
-class RetrievalResult:
-    name: str
-    hits: Sequence[ScoredHit]
-    tiebreak_weight: float
 
 
 class Retriever(Protocol):
@@ -95,7 +81,7 @@ class LexicalRetriever:
         self._db = database
         self._policy = policy
         self.name = "lexical"
-        self.tiebreak_weight = float(BM25_TIEBREAK_WEIGHT)
+        self.tiebreak_weight = 0.02
         self.depth_ratio = None
 
     def retrieve(self, *, user_id: str, query: str, limit: int) -> list[ScoredHit]:
@@ -182,59 +168,3 @@ class DenseRetriever:
 
 
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
-
-
-def _coverage(content: str, words: set[str]) -> float:
-    if not words:
-        return 0.0
-    lowered = content.lower()
-    tokens = set(_WORD_RE.findall(lowered))
-    hit = sum(1 for word in words if word in tokens or word in lowered)
-    return hit / len(words)
-
-
-def fuse(
-    results: Sequence[RetrievalResult],
-    *,
-    query: str,
-    limit: int,
-) -> list[SearchHit]:
-    scores: dict[int, float] = {}
-    messages: dict[int, Message] = {}
-    raw_by_retriever: dict[str, dict[int, float]] = {}
-    for result in results:
-        raw_by_retriever[result.name] = {}
-        for rank, hit in enumerate(result.hits, start=1):
-            mid = hit.message.id
-            scores[mid] = scores.get(mid, 0.0) + 1.0 / (RRF_K + rank)
-            messages[mid] = hit.message
-            raw_by_retriever[result.name][mid] = hit.raw
-
-    normalised: dict[int, float] = {}
-    for result in results:
-        if result.tiebreak_weight <= 0 or not result.hits:
-            continue
-        values = list(raw_by_retriever[result.name].values())
-        low, high = min(values), max(values)
-        span = (high - low) or 1.0
-        for mid, value in raw_by_retriever[result.name].items():
-            normalised[mid] = normalised.get(mid, 0.0) + result.tiebreak_weight * (
-                (high - value) / span
-            )
-
-    words = {word.lower() for word in terms(query, max_terms=16)}
-    words |= {gram.lower() for gram in cjk_bigrams(query)}
-    words |= {word.lower() for word in cjk_words(query)}
-
-    scored: list[tuple[int, float]] = []
-    for mid, score in scores.items():
-        message = messages[mid]
-        score *= 1.0 + COVERAGE_WEIGHT * _coverage(message.content, words)
-        score += normalised.get(mid, 0.0)
-        scored.append((mid, score))
-    scored.sort(key=lambda item: (-item[1], item[0]))
-
-    return [
-        SearchHit(message=messages[mid], score=score)
-        for mid, score in scored[:limit]
-    ]
