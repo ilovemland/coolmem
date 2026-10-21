@@ -13,7 +13,7 @@ from pathlib import Path
 
 logger = logging.getLogger("uvicorn.error")
 
-_SCHEMA_VERSION = 12
+_SCHEMA_VERSION = 13
 
 _DDL_V1: tuple[str, ...] = (
     """
@@ -398,6 +398,18 @@ def _apply_v12(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+_DDL_V13: tuple[str, ...] = (
+    "ALTER TABLE messages ADD COLUMN is_feedback INTEGER NOT NULL DEFAULT 0",
+    "UPDATE messages SET is_feedback = 1 WHERE content LIKE 'Streaming online QA feedback:%'",
+    "CREATE INDEX messages_feedback_idx ON messages (user_id, is_feedback)",
+)
+
+
+def _apply_v13(conn: sqlite3.Connection) -> None:
+    for statement in _DDL_V13:
+        conn.execute(statement)
+
+
 _MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _apply_v1,
     _apply_v2,
@@ -411,6 +423,7 @@ _MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _apply_v10,
     _apply_v11,
     _apply_v12,
+    _apply_v13,
 )
 
 

@@ -20,8 +20,15 @@ from app.timefmt import format_time
 _ROLES = frozenset({"user", "assistant"})
 
 
+FEEDBACK_PREFIX = "streaming online qa feedback:"
+
+
 def _content_digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _is_feedback(content: str) -> bool:
+    return content.lstrip().lower().startswith(FEEDBACK_PREFIX)
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +85,10 @@ class AddService:
             )
 
         now = utc_now()
-        rows = [self._prepare(index, message, now) for index, message in enumerate(messages)]
+        rows = [
+            replace(self._prepare(index, message, now), is_feedback=_is_feedback(message.content))
+            for index, message in enumerate(messages)
+        ]
         self._attach_context(rows)
         texts = [row.render() for row in rows]
         digests = [_content_digest(text) for text in texts]

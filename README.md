@@ -148,6 +148,7 @@ Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任�
 ## 检索实现
 
 - **写入**：原文先归一化（日期/数字等价写法、CJK 单字/双字/分词）写入 FTS；同一批 add 内前后各 3 条消息记为邻居文本，供词法通道的上下文列使用；消息与向量在同一事务写入。
+- **feedback 过滤**：平台会在每题后回灌 `Streaming online QA feedback` 消息；写入时标记 `is_feedback`，三个召回通道一律排除，否则后续检索会被前序问答摘要污染（实测 @1 从 100 掉到 13）。
 - **三路召回按配额合并**（`CHANNEL_QUOTAS = dense 0.80 / lexical 0.15 / substring 0.05`）：向量余弦（`user_id` + `space`，numpy 矩阵 + 按 user 缓存）占 80% 名额，FTS5 BM25（`search_text` 1.0 / `nearby_text` 0.5 / `role` 0.2，先 AND 再 OR 补齐）占 15%，trigram 子串（深度 `top_k × 0.5`）占 5%；同一条消息只收一次，某一路不足时由其余通道补齐。
 - **长 query**：超过 `MAX_QUERY_CHARS` 时抽问题行 + 首 40% / 尾 60% 生成检索副本；原文与返回不变。
 - **分段检索**：query 含空行分段时，取「整段 + 首段 + 末段」各检索一次，按 RRF 合并；单段 query 行为不变。

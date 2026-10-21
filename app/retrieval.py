@@ -106,7 +106,7 @@ class LexicalRetriever:
                 f"""
             SELECT {_COLUMNS}, bm25(messages_fts, 1.0, ?, 0.2) AS rank_score
               FROM messages_fts JOIN messages ON messages.id = messages_fts.rowid
-             WHERE messages_fts MATCH ? AND messages.user_id = ?
+             WHERE messages_fts MATCH ? AND messages.user_id = ? AND messages.is_feedback = 0
              ORDER BY bm25(messages_fts, 1.0, ?, 0.2), messages.id
              LIMIT ?
             """,
@@ -135,7 +135,7 @@ class SubstringRetriever:
                 f"""
             SELECT {_COLUMNS}, bm25(messages_trgm) AS rank_score
               FROM messages_trgm JOIN messages ON messages.id = messages_trgm.rowid
-             WHERE messages_trgm MATCH ? AND messages.user_id = ?
+             WHERE messages_trgm MATCH ? AND messages.user_id = ? AND messages.is_feedback = 0
              ORDER BY bm25(messages_trgm), messages.id
              LIMIT ?
             """,
