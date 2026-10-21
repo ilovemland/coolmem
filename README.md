@@ -78,7 +78,7 @@ Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任�
 
 精排失败（服务不可达、返回结构不符）时**自动降级为原排序**，`/search` 不会因此失败。精排深度、混合权重与文档截断由 `Policy` 的 `rerank_depth` / `rerank_blend` / `rerank_doc_chars` 控制（默认 200 / 1.0 / 2400）；`rerank_blend=1.0` 表示完全按精排分数排序。
 
-返回正文的邻居扩展由 `Policy.neighbor_message_chars`（默认 200）控制：命中条目会附带同 session 前一条的尾部与后一条的头部各 200 字符，邻居超过 `neighbor_skip_chars`（默认 640）时跳过。它只改返回正文，不改索引与排序。
+返回正文的邻居扩展由 `Policy.neighbor_message_chars`（默认 0，即关闭）控制：开启时命中条目会附带同 session 前一条的尾部与后一条的头部各 N 字符，邻居超过 `neighbor_skip_chars`（默认 640）时跳过。它只改返回正文，不改索引与排序。实测它会提高 reached@K（gold 落进邻居文本）但降低端到端答题准确率，因此默认关闭。
 
 ## 启动
 
