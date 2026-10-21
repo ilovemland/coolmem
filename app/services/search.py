@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from app.embedding import EmbeddingError
 from app.errors import InvalidInput, Unavailable
-from app.policy import MAX_QUERY_CHARS, MAX_TOP_K, MAX_IDENTIFIER_CHARS, OPTION_TOP_K, Policy
+from app.policy import MAX_QUERY_CHARS, MAX_TOP_K, MAX_IDENTIFIER_CHARS, Policy
 from app.retrieval import Message
 from app.storage.repository import MessageRepository
 
@@ -20,9 +20,7 @@ class SearchService:
         self._repo = repository
         self._policy = policy
 
-    def search(
-        self, *, user_id: str, query: str, top_k: int, options: list[str] | None = None
-    ) -> list[SearchResult]:
+    def search(self, *, user_id: str, query: str, top_k: int) -> list[SearchResult]:
         user_id = self._identifier(
             user_id, field="user_id", max_chars=MAX_IDENTIFIER_CHARS
         )
@@ -36,8 +34,6 @@ class SearchService:
         if top_k <= 0:
             raise InvalidInput("top_k must be positive", details={"field": "top_k"})
         limit = min(top_k, MAX_TOP_K)
-        if options:
-            limit = min(limit, OPTION_TOP_K)
 
         try:
             hits = self._repo.search(user_id=user_id, query=query, limit=limit)
