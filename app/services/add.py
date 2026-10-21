@@ -21,6 +21,32 @@ _ROLES = frozenset({"user", "assistant"})
 
 
 FEEDBACK_PREFIX = "streaming online qa feedback:"
+SPLIT_ABOVE_CHARS = 3_000
+SPLIT_CHUNK_CHARS = 1_200
+SPLIT_HEADER_CHARS = 120
+
+
+def _split_long(content: str) -> list[str]:
+    if len(content) <= SPLIT_ABOVE_CHARS:
+        return [content]
+    first_line = content.strip().split("\n", 1)[0][:SPLIT_HEADER_CHARS]
+    paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+    pieces: list[str] = []
+    current = ""
+    for paragraph in paragraphs:
+        if current and len(current) + len(paragraph) + 2 > SPLIT_CHUNK_CHARS:
+            pieces.append(current)
+            current = paragraph
+        else:
+            current = f"{current}\n\n{paragraph}".strip() if current else paragraph
+    if current:
+        pieces.append(current)
+    if len(pieces) <= 1:
+        return [content]
+    return [
+        piece if piece.startswith(first_line) else f"{first_line}\n\n{piece}"
+        for piece in pieces
+    ]
 
 
 def _content_digest(text: str) -> str:
@@ -85,10 +111,21 @@ class AddService:
             )
 
         now = utc_now()
-        rows = [
-            replace(self._prepare(index, message, now), is_feedback=_is_feedback(message.content))
-            for index, message in enumerate(messages)
-        ]
+        rows = []
+        for index, message in enumerate(messages):
+            prepared = self._prepare(index, message, now)
+            for piece in _split_long(message.content):
+                rows.append(
+                    replace(
+                        prepared,
+                        content=piece,
+                        is_feedback=_is_feedback(piece),
+                    )
+                    if piece != message.content
+                    else replace(prepared, is_feedback=_is_feedback(piece))
+                )
+        for position, row in enumerate(rows):
+            rows[position] = replace(row, position=position)
         self._attach_context(rows)
         texts = [row.render() for row in rows]
         digests = [_content_digest(text) for text in texts]
