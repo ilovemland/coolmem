@@ -34,7 +34,7 @@ class Policy:
     neighbor_skip_chars: int = 640
     neighbor_top_n: int = 0
     rerank_enabled: bool = True
-    rerank_depth: int = 200
+    rerank_depth: int = 100
     rerank_blend: float = 1.0
     rerank_doc_chars: int = 2400
     rerank_context: bool = False
