@@ -6,6 +6,8 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable, Iterator
+
+from app.policy import NEARBY_SPAN
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -138,9 +140,8 @@ _DDL_V3: tuple[str, ...] = (
 
 
 def _apply_v3(conn: sqlite3.Connection) -> None:
-    from app.policy import DEFAULT_POLICY
 
-    window = max(0, int(DEFAULT_POLICY.nearby_span))
+    window = max(0, NEARBY_SPAN)
     for statement in _DDL_V3:
         conn.execute(statement)
     rows = conn.execute(

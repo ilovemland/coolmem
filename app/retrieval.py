@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.policy import Policy
+from app.policy import (
+    BM25_TIEBREAK_WEIGHT,
+    COVERAGE_WEIGHT,
+    NEARBY_WEIGHT,
+    RRF_K,
+    SEARCH_CANDIDATES,
+    SUBSTRING_DEPTH_RATIO,
+)
 from app.storage.database import Database
 from app.text import cjk_bigrams, cjk_words, fts_query, terms, trigram_query
 
@@ -88,11 +95,11 @@ class LexicalRetriever:
         self._db = database
         self._policy = policy
         self.name = "lexical"
-        self.tiebreak_weight = float(policy.bm25_tiebreak_weight)
+        self.tiebreak_weight = float(BM25_TIEBREAK_WEIGHT)
         self.depth_ratio = None
 
     def retrieve(self, *, user_id: str, query: str, limit: int) -> list[ScoredHit]:
-        candidates = max(limit, self._policy.search_candidates)
+        candidates = max(limit, SEARCH_CANDIDATES)
         relaxed = fts_query(query, operator="OR")
         if not relaxed:
             return []
@@ -106,7 +113,7 @@ class LexicalRetriever:
         return filled[:limit]
 
     def _run_fts(self, user_id: str, match: str, limit: int) -> list[ScoredHit]:
-        weight = float(self._policy.nearby_weight)
+        weight = NEARBY_WEIGHT
         rows = (
             self._db.connection()
             .execute(
@@ -130,7 +137,7 @@ class SubstringRetriever:
         self._policy = policy
         self.name = "substring"
         self.tiebreak_weight = 0.0
-        self.depth_ratio = float(policy.substring_depth_ratio)
+        self.depth_ratio = SUBSTRING_DEPTH_RATIO
 
     def retrieve(self, *, user_id: str, query: str, limit: int) -> list[ScoredHit]:
         match = trigram_query(query)
@@ -186,38 +193,26 @@ def _coverage(content: str, words: set[str]) -> float:
     return hit / len(words)
 
 
-_RRF_K = 15
-
-
 def fuse(
     results: Sequence[RetrievalResult],
     *,
     query: str,
-    policy: Policy,
     limit: int,
-    weights: Mapping[str, float] | None = None,
-    coverage_scale: float = 1.0,
 ) -> list[SearchHit]:
     scores: dict[int, float] = {}
     messages: dict[int, Message] = {}
     raw_by_retriever: dict[str, dict[int, float]] = {}
-    rrf_k = max(1, int(getattr(policy, "rrf_k", _RRF_K)))
     for result in results:
-        channel_weight = 1.0 if weights is None else float(weights.get(result.name, 0.0))
-        if channel_weight <= 0:
-            continue
         raw_by_retriever[result.name] = {}
         for rank, hit in enumerate(result.hits, start=1):
             mid = hit.message.id
-            scores[mid] = scores.get(mid, 0.0) + channel_weight / (rrf_k + rank)
+            scores[mid] = scores.get(mid, 0.0) + 1.0 / (RRF_K + rank)
             messages[mid] = hit.message
             raw_by_retriever[result.name][mid] = hit.raw
 
     normalised: dict[int, float] = {}
     for result in results:
         if result.tiebreak_weight <= 0 or not result.hits:
-            continue
-        if weights is not None and float(weights.get(result.name, 0.0)) <= 0:
             continue
         values = list(raw_by_retriever[result.name].values())
         low, high = min(values), max(values)
@@ -230,12 +225,11 @@ def fuse(
     words = {word.lower() for word in terms(query, max_terms=16)}
     words |= {gram.lower() for gram in cjk_bigrams(query)}
     words |= {word.lower() for word in cjk_words(query)}
-    coverage_weight = float(policy.coverage_weight) * coverage_scale
 
     scored: list[tuple[int, float]] = []
     for mid, score in scores.items():
         message = messages[mid]
-        score *= 1.0 + coverage_weight * _coverage(message.content, words)
+        score *= 1.0 + COVERAGE_WEIGHT * _coverage(message.content, words)
         score += normalised.get(mid, 0.0)
         scored.append((mid, score))
     scored.sort(key=lambda item: (-item[1], item[0]))

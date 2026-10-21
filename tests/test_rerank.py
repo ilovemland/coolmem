@@ -70,8 +70,7 @@ class CircuitTest(unittest.TestCase):
 
 class RepositoryRerankTest(unittest.TestCase):
     def build(self, reranker) -> MessageRepository:
-        policy = Policy(rerank_enabled=True, rerank_depth=4, rerank_blend=1.0)
-        return MessageRepository(None, policy, retrievers=[], reranker=reranker)
+        return MessageRepository(None, Policy(rerank_enabled=True), retrievers=[], reranker=reranker)
 
     def test_reorders_by_rerank_score(self) -> None:
         reranker = FakeReranker(scores=[-5.0, 3.0, 0.0])
@@ -79,13 +78,6 @@ class RepositoryRerankTest(unittest.TestCase):
         hits = [SearchHit(message(1, "a"), 0.3), SearchHit(message(2, "b"), 0.2), SearchHit(message(3, "c"), 0.1)]
         ordered = repo._rerank("q", hits)
         self.assertEqual([hit.message.id for hit in ordered], [2, 3, 1])
-
-    def test_truncates_documents(self) -> None:
-        reranker = FakeReranker(scores=[0.0])
-        policy = Policy(rerank_enabled=True, rerank_depth=4, rerank_doc_chars=3)
-        repo = MessageRepository(None, policy, retrievers=[], reranker=reranker)
-        repo._rerank("q", [SearchHit(message(1, "abcdef"), 0.3)])
-        self.assertEqual(reranker.calls[0][1], ["abc"])
 
     def test_uses_core_query(self) -> None:
         reranker = FakeReranker(scores=[0.0])
@@ -99,34 +91,14 @@ class RepositoryRerankTest(unittest.TestCase):
         hits = [SearchHit(message(1, "a"), 0.3), SearchHit(message(2, "b"), 0.2)]
         self.assertEqual([hit.message.id for hit in repo._rerank("q", hits)], [1, 2])
 
-    def test_blend_keeps_rrf_order_at_zero(self) -> None:
-        reranker = FakeReranker(scores=[-10.0, 10.0])
-        policy = Policy(rerank_enabled=True, rerank_depth=4, rerank_blend=0.0)
-        repo = MessageRepository(None, policy, retrievers=[], reranker=reranker)
-        hits = [SearchHit(message(1, "a"), 0.3), SearchHit(message(2, "b"), 0.2)]
-        self.assertEqual([hit.message.id for hit in repo._rerank("q", hits)], [1, 2])
+    def test_documents_are_truncated(self) -> None:
+        from app.policy import RERANK_DOC_CHARS
+
+        reranker = FakeReranker(scores=[0.0])
+        repo = self.build(reranker)
+        repo._rerank("q", [SearchHit(message(1, "x" * (RERANK_DOC_CHARS + 50)), 0.3)])
+        self.assertEqual(len(reranker.calls[0][1][0]), RERANK_DOC_CHARS)
 
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class ReturnClipTest(unittest.TestCase):
-    def test_clip_keeps_head_and_tail(self) -> None:
-        from app.services.search import _clip
-
-        text = "a" * 3000 + "TAIL"
-        clipped = _clip(text, 100)
-        self.assertEqual(len(clipped), 100 + len("\n...\n"))
-        self.assertTrue(clipped.startswith("a" * 75))
-        self.assertTrue(clipped.endswith("TAIL"))
-
-    def test_clip_is_off_by_default(self) -> None:
-        from app.policy import Policy
-
-        self.assertEqual(Policy().max_return_chars, 0)
-
-    def test_body_limit_allows_long_documents(self) -> None:
-        from app.settings import Settings
-
-        self.assertGreaterEqual(Settings(bearer_token="x" * 32).max_body_bytes, 4_000_000)

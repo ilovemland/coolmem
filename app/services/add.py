@@ -5,7 +5,13 @@ from dataclasses import dataclass, replace
 
 from app.embedding import EmbeddingClient, EmbeddingError
 from app.errors import InvalidInput, Unavailable
-from app.policy import Policy
+from app.policy import (
+    MAX_CONTENT_CHARS,
+    MAX_IDENTIFIER_CHARS,
+    MAX_MESSAGES_PER_ADD,
+    NEARBY_SPAN,
+    Policy,
+)
 from app.storage.repository import MessageRepository, NewMessage
 from app.text import ms_to_iso, utc_now
 from app.timefmt import format_time
@@ -50,19 +56,19 @@ class AddService:
         request_id = self._required(
             request_id,
             field="request_id",
-            max_chars=self._policy.max_request_id_chars,
+            max_chars=MAX_IDENTIFIER_CHARS,
         )
-        user_id = self._required(user_id, field="user_id", max_chars=self._policy.max_user_id_chars)
+        user_id = self._required(user_id, field="user_id", max_chars=MAX_IDENTIFIER_CHARS)
         session_id = self._required(
             session_id,
             field="session_id",
-            max_chars=self._policy.max_session_id_chars,
+            max_chars=MAX_IDENTIFIER_CHARS,
         )
         if not messages:
             raise InvalidInput("messages must not be empty", details={"field": "messages"})
-        if len(messages) > self._policy.max_messages_per_add:
+        if len(messages) > MAX_MESSAGES_PER_ADD:
             raise InvalidInput(
-                f"at most {self._policy.max_messages_per_add} messages per request",
+                f"at most {MAX_MESSAGES_PER_ADD} messages per request",
                 details={"field": "messages", "count": len(messages)},
             )
 
@@ -87,7 +93,7 @@ class AddService:
         return AddResult(inserted=len(result.ids), skipped=result.skipped)
 
     def _attach_context(self, rows: list[NewMessage]) -> None:
-        window = max(0, int(self._policy.nearby_span))
+        window = max(0, int(NEARBY_SPAN))
         if window == 0:
             return
         texts = [row.render() for row in rows]
@@ -98,7 +104,7 @@ class AddService:
 
     def _prepare(self, position: int, message: IncomingMessage, now: str) -> NewMessage:
         role = self._required(
-            message.role, field=f"messages[{position}].role", max_chars=self._policy.max_role_chars
+            message.role, field=f"messages[{position}].role", max_chars=MAX_IDENTIFIER_CHARS
         )
         if role not in _ROLES:
             raise InvalidInput(
@@ -111,10 +117,10 @@ class AddService:
                 f"messages[{position}].content must not be blank",
                 details={"field": f"messages[{position}].content"},
             )
-        if len(content) > self._policy.max_content_chars:
+        if len(content) > MAX_CONTENT_CHARS:
             raise InvalidInput(
                 f"messages[{position}].content must be at most "
-                f"{self._policy.max_content_chars} characters",
+                f"{MAX_CONTENT_CHARS} characters",
                 details={"field": f"messages[{position}].content", "length": len(content)},
             )
         if message.timestamp is not None and message.timestamp < 0:

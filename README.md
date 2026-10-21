@@ -76,11 +76,9 @@ Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任�
 - `failure_threshold` / `cooldown_seconds`：连续失败几次后熔断、熔断多久（默认 3 次 / 60 秒）；熔断期间 `/search` 直接走纯 RRF，不再等待精排。
 - `api_key_env`：可选，填环境变量名。
 
-返回条目的长度截断由 `Policy.max_return_chars` 控制（默认 0 = 不截断）：开启后超长条目保留头部 3/4 与尾部 1/4，中间以 `...` 省略。短条目不受影响；它只改返回正文，不改索引与排序。
 
 精排失败（服务不可达、返回结构不符）时**自动降级为原排序**，`/search` 不会因此失败。精排深度、混合权重与文档截断由 `Policy` 的 `rerank_depth` / `rerank_blend` / `rerank_doc_chars` 控制（默认 200 / 1.0 / 2400）；`rerank_blend=1.0` 表示完全按精排分数排序。
 
-返回正文的邻居扩展由 `Policy.context_expand_chars`（默认 0，即关闭）控制：开启时命中条目会附带同 session 前一条的尾部与后一条的头部各 N 字符，邻居超过 `context_source_limit`（默认 640）时跳过。它只改返回正文，不改索引与排序。实测它会提高 reached@K（gold 落进邻居文本）但降低端到端答题准确率，因此默认关闭。
 
 ## 启动
 
@@ -154,14 +152,11 @@ Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任�
 2. **词法检索**：FTS5 上的 BM25（`search_text` 权重 1.0、`nearby_text` 0.5、`role` 0.2）；先 AND 再 OR 补齐名额。
 3. **子串检索**：trigram 索引覆盖分词切不中的片段；候选深度只有 `max(1, int(top_k × 0.5))`（`Policy.substring_depth_ratio`），而词法/向量通道为 `max(top_k, 200)`。
 4. **向量检索（必需）**：Add 时先调 embedding 服务，成功后才把消息和 float32 向量在同一事务里写入（`message_vectors`）；Search 时对 query 调同一服务，按 `user_id` + `space` 做余弦相似度取候选。
-5. **查询门控（可选，默认关闭）**：开启 `Policy(lane_gating=True)` 后，按 query 形态选 `dense` / `hybrid` / `literal` 三条车道。`dense` 只跑向量路；`hybrid` 三路都跑并放大词法权重；`literal` 只跑词法与子串。门控只看 query 本身（引号、代码/ID、日期/数字、短实体问句、词数、问句结构），阈值在 `app/gating.py` 的 `GateConfig`。默认质量优先走等权三路。
 6. **融合**：RRF + 车道权重 + BM25 归一化同分裁决 + 查询词覆盖率加成。开启门控时 hybrid 权重为 dense 1 / lexical 8 / substring 8；literal 为 lexical 1 / substring 1。
 7. **不回退**：embedding 不可用或调用失败 → 503，不转词法；dense 返回空就是空结果。仅 `literal` 车道在词法无命中时回退 dense（仍要求 embedding）；候选深度不变。
 8. **指令边界分解**：query 含“核心问题 + 格式指令”两段时（无选项、空行分隔、次段含 `Use only / Return all / Document title` 等标记），对核心段再检索一次，按 RRF 与完整 query 合并。只增加候选，不降深度；`Policy.instruction_decomposition` 可关。
-9. **证据包窗口**：最终排序后，把每条命中扩展为同 session 前后各 `context_window_turns` 条消息拼接的正文；种子 id/score 不变，不加新索引、零 LLM。默认 2，设 0 关闭。
 10. 其余阈值集中在 `app/policy.py`。
 
-**期望构成（诊断用，不作为验收）**：开启门控时，`top_k=100` 的最终结果预期约为仅语义 75%、语义+词法 15%、仅词法 10%。默认质量优先配置是 `lane_gating=False`，不保证该构成；构成只用来发现“哪类 query 走错车道”。验收看 K=100 的 reached@1/@3/@10/@100 和端到端答对率；MRR 只进诊断表。
 
 ## 数据与备份
 
