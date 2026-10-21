@@ -20,8 +20,8 @@ class Policy:
     search_candidates: int = 200
     substring_depth_ratio: float = 0.5
 
-    neighbor_window: int = 3
-    neighbor_weight: float = 0.5
+    nearby_span: int = 3
+    nearby_weight: float = 0.5
 
     coverage_weight: float = 2.0
     rrf_k: int = 15
@@ -30,9 +30,9 @@ class Policy:
     lane_gating: bool = False
     instruction_decomposition: bool = True
     context_window_turns: int = 0
-    neighbor_message_chars: int = 0
-    neighbor_skip_chars: int = 640
-    neighbor_top_n: int = 0
+    context_expand_chars: int = 0
+    context_source_limit: int = 640
+    context_top_n: int = 0
     rerank_enabled: bool = True
     rerank_depth: int = 100
     rerank_blend: float = 1.0

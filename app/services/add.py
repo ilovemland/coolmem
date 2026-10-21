@@ -68,7 +68,7 @@ class AddService:
 
         now = utc_now()
         rows = [self._prepare(index, message, now) for index, message in enumerate(messages)]
-        self._attach_neighbours(rows)
+        self._attach_context(rows)
         try:
             vectors = self._embedding.embed_documents([row.render() for row in rows])
         except (EmbeddingError, ValueError) as exc:
@@ -86,15 +86,15 @@ class AddService:
         )
         return AddResult(inserted=len(result.ids), skipped=result.skipped)
 
-    def _attach_neighbours(self, rows: list[NewMessage]) -> None:
-        window = max(0, int(self._policy.neighbor_window))
+    def _attach_context(self, rows: list[NewMessage]) -> None:
+        window = max(0, int(self._policy.nearby_span))
         if window == 0:
             return
         texts = [row.render() for row in rows]
         for index, row in enumerate(rows):
             lo, hi = max(0, index - window), min(len(rows), index + window + 1)
             neighbours = [texts[j] for j in range(lo, hi) if j != index]
-            rows[index] = replace(row, neighbor_text="\n".join(neighbours))
+            rows[index] = replace(row, nearby_text="\n".join(neighbours))
 
     def _prepare(self, position: int, message: IncomingMessage, now: str) -> NewMessage:
         role = self._required(

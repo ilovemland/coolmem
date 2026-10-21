@@ -106,7 +106,7 @@ class LexicalRetriever:
         return filled[:limit]
 
     def _run_fts(self, user_id: str, match: str, limit: int) -> list[ScoredHit]:
-        weight = float(self._policy.neighbor_weight)
+        weight = float(self._policy.nearby_weight)
         rows = (
             self._db.connection()
             .execute(

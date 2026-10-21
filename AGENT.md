@@ -23,4 +23,4 @@
 
 - 监听：`0.0.0.0:8005`
 - 字符集：英文与中文都支持；中文检索靠 FTS5 + cutword 分词 + CJK 单字/双字扩展
-- 检索：FTS5 + trigram + dense 向量做 RRF 融合，再经 cross-encoder 精排（`bge-reranker-v2-m3`，可选）重排。邻居扩展（`neighbor_message_chars`）默认关闭：它能让 gold 落进邻居文本从而提高 reached@K，但端到端答题反而下降（同字符预算下多给条目优于每条更长），详见 `history.md`。具体口径见本地 `history.md`（不推送）。
+- 检索：FTS5 + trigram + dense 向量做 RRF 融合，再经 cross-encoder 精排（`bge-reranker-v2-m3`，可选）重排。邻居扩展（`context_expand_chars`）默认关闭：它能让 gold 落进邻居文本从而提高 reached@K，但端到端答题反而下降（同字符预算下多给条目优于每条更长），详见 `history.md`。具体口径见本地 `history.md`（不推送）。

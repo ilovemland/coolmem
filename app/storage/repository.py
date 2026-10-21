@@ -55,7 +55,7 @@ class NewMessage:
     content: str
     timestamp: int | None
     created_at: str
-    neighbor_text: str = ""
+    nearby_text: str = ""
     time_text: str = ""
 
     def render(self) -> str:
@@ -146,7 +146,7 @@ class MessageRepository:
                     """
                     INSERT OR IGNORE INTO messages
                         (request_id, position, user_id, session_id, role,
-                         content, source_content, search_text, neighbor_text, timestamp, created_at)
+                         content, source_content, search_text, nearby_text, timestamp, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
@@ -158,7 +158,7 @@ class MessageRepository:
                         row.render(),
                         row.content,
                         expanded_text(row.render()),
-                        row.neighbor_text,
+                        row.nearby_text,
                         row.timestamp,
                         row.created_at,
                     ),
@@ -308,11 +308,11 @@ class MessageRepository:
                     hits = segment_hits
         core = core_query(query, self._policy.gate)
         if self._policy.rerank_context:
-            hits = self._expand_neighbors(user_id, hits)
+            hits = self._expand_context(user_id, hits)
         hits = self._rerank(query, hits, core)
         hits = hits[:limit]
         if not self._policy.rerank_context:
-            hits = self._expand_neighbors(user_id, hits)
+            hits = self._expand_context(user_id, hits)
         return self._dilate(user_id, hits)
 
     def _rerank(
@@ -362,13 +362,13 @@ class MessageRepository:
             ]
         return head + tail
 
-    def _expand_neighbors(
+    def _expand_context(
         self, user_id: str, hits: Sequence[SearchHit]
     ) -> list[SearchHit]:
-        limit = int(self._policy.neighbor_message_chars)
+        limit = int(self._policy.context_expand_chars)
         if limit <= 0 or not hits or self._db is None:
             return list(hits)
-        skip = max(1, int(self._policy.neighbor_skip_chars))
+        skip = max(1, int(self._policy.context_source_limit))
         grouped: dict[str, list[SearchHit]] = defaultdict(list)
         for hit in hits:
             grouped[hit.message.session_id].append(hit)
@@ -388,7 +388,7 @@ class MessageRepository:
                 for position, (message_id, _) in enumerate(rows_by_session[session_id])
             }
         expanded = []
-        top_n = max(0, int(self._policy.neighbor_top_n))
+        top_n = max(0, int(self._policy.context_top_n))
         for position, hit in enumerate(hits):
             if top_n and position >= top_n:
                 expanded.append(hit)

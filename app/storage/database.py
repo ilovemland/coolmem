@@ -11,7 +11,7 @@ from pathlib import Path
 
 logger = logging.getLogger("uvicorn.error")
 
-_SCHEMA_VERSION = 9
+_SCHEMA_VERSION = 10
 
 _DDL_V1: tuple[str, ...] = (
     """
@@ -140,7 +140,7 @@ _DDL_V3: tuple[str, ...] = (
 def _apply_v3(conn: sqlite3.Connection) -> None:
     from app.policy import DEFAULT_POLICY
 
-    window = max(0, int(DEFAULT_POLICY.neighbor_window))
+    window = max(0, int(DEFAULT_POLICY.nearby_span))
     for statement in _DDL_V3:
         conn.execute(statement)
     rows = conn.execute(
@@ -323,6 +323,42 @@ def _apply_v9(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+_DDL_V10: tuple[str, ...] = (
+    "ALTER TABLE messages RENAME COLUMN neighbor_text TO nearby_text",
+    "DROP TRIGGER IF EXISTS messages_ai",
+    "DROP TRIGGER IF EXISTS messages_ad",
+    "DROP TABLE IF EXISTS messages_fts",
+    """
+    CREATE VIRTUAL TABLE messages_fts USING fts5 (
+        search_text, nearby_text, role,
+        tokenize = 'unicode61 remove_diacritics 2'
+    )
+    """,
+    """
+    CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts (rowid, search_text, nearby_text, role)
+            VALUES (new.id, COALESCE(new.search_text, new.content),
+                    COALESCE(new.nearby_text, ''), new.role);
+        INSERT INTO messages_trgm (rowid, content)
+            VALUES (new.id, new.content);
+    END
+    """,
+    """
+    CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+        DELETE FROM messages_fts WHERE rowid = old.id;
+        DELETE FROM messages_trgm WHERE rowid = old.id;
+    END
+    """,
+    "INSERT INTO messages_fts (rowid, search_text, nearby_text, role) "
+    "SELECT id, search_text, COALESCE(nearby_text, ''), role FROM messages",
+)
+
+
+def _apply_v10(conn: sqlite3.Connection) -> None:
+    for statement in _DDL_V10:
+        conn.execute(statement)
+
+
 _MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _apply_v1,
     _apply_v2,
@@ -333,6 +369,7 @@ _MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _apply_v7,
     _apply_v8,
     _apply_v9,
+    _apply_v10,
 )
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import re
+import string
 import sys
 import time
 from dataclasses import fields, replace
@@ -15,33 +15,56 @@ from app.container import Container
 from app.policy import Policy
 from app.settings import Settings
 
-WINDOW = 60
-_SPACE = re.compile(r"\s+")
+EDGE_CHARS = string.whitespace + string.punctuation + "。，、；：？！“”‘’（）【】《》…—"
+MIN_OVERLAP = 60
+_HASH_BASE = 1_000_003
+_HASH_MOD = (1 << 61) - 1
 
 
-def normalise(text: str) -> str:
-    return _SPACE.sub(" ", str(text).lower()).strip()
+def canonical(text: str) -> str:
+    parts = str(text).casefold().split()
+    return " ".join(parts)
 
 
-def contained(turn: str, evidence: str) -> bool:
-    needle = normalise(turn).strip(" .!?,;:\"'")
-    if not needle:
+def _window_fingerprints(text: str, width: int) -> set[int]:
+    if len(text) < width:
+        return set()
+    codes = [ord(char) for char in text]
+    head = codes[:width]
+    rolling = 0
+    power = 1
+    for code in head:
+        rolling = (rolling * _HASH_BASE + code) % _HASH_MOD
+        power = power * _HASH_BASE % _HASH_MOD
+    fingerprints = {rolling}
+    for position in range(width, len(codes)):
+        rolling = (
+            rolling * _HASH_BASE + codes[position] - codes[position - width] * power
+        ) % _HASH_MOD
+        fingerprints.add(rolling)
+    return fingerprints
+
+
+def gold_covered(gold: str, evidence: str) -> bool:
+    target = canonical(gold).strip(EDGE_CHARS)
+    if not target:
         return False
-    if len(needle) <= WINDOW:
-        candidates = [needle]
-    else:
-        candidates = [
-            needle[index : index + WINDOW]
-            for index in range(0, len(needle) - WINDOW + 1)
-        ]
-    return any(candidate in evidence for candidate in candidates)
+    source = canonical(evidence)
+    if target in source:
+        return True
+    if len(target) <= MIN_OVERLAP:
+        return False
+    shared = _window_fingerprints(target, MIN_OVERLAP) & _window_fingerprints(
+        source, MIN_OVERLAP
+    )
+    return bool(shared)
 
 
 def hit_rank(golds: list[str], evidence: list[str]) -> int:
     if not golds:
         return -1
     for index, text in enumerate(evidence):
-        if any(contained(gold, text) for gold in golds):
+        if any(gold_covered(gold, text) for gold in golds):
             return index
     return -1
 
@@ -107,7 +130,7 @@ def main() -> int:
         results = container.search.search(
             user_id=case["user_id"], query=case["query"], top_k=args.top_k
         )
-        evidence = [normalise(item.message.content) for item in results]
+        evidence = [canonical(item.message.content) for item in results]
         rank = hit_rank(case.get("gold") or [], evidence)
         rows.append(
             {

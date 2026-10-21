@@ -80,7 +80,7 @@ Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任�
 
 精排失败（服务不可达、返回结构不符）时**自动降级为原排序**，`/search` 不会因此失败。精排深度、混合权重与文档截断由 `Policy` 的 `rerank_depth` / `rerank_blend` / `rerank_doc_chars` 控制（默认 200 / 1.0 / 2400）；`rerank_blend=1.0` 表示完全按精排分数排序。
 
-返回正文的邻居扩展由 `Policy.neighbor_message_chars`（默认 0，即关闭）控制：开启时命中条目会附带同 session 前一条的尾部与后一条的头部各 N 字符，邻居超过 `neighbor_skip_chars`（默认 640）时跳过。它只改返回正文，不改索引与排序。实测它会提高 reached@K（gold 落进邻居文本）但降低端到端答题准确率，因此默认关闭。
+返回正文的邻居扩展由 `Policy.context_expand_chars`（默认 0，即关闭）控制：开启时命中条目会附带同 session 前一条的尾部与后一条的头部各 N 字符，邻居超过 `context_source_limit`（默认 640）时跳过。它只改返回正文，不改索引与排序。实测它会提高 reached@K（gold 落进邻居文本）但降低端到端答题准确率，因此默认关闭。
 
 ## 启动
 
@@ -151,7 +151,7 @@ Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任�
 
 0. **长 query 裁剪**：query 超过 `Policy.search_query_chars`（默认 12,000）时，先抽问题/指令行放到检索副本前部，再取首 40% / 尾 60% 上下文；切口对齐换行或句子边界。原文不存储、返回内容不变。精排未在默认链路；接入时 query/document 预算单独算，不复用 embedding 的 12k。
 1. **索引侧文本**（写入时生成）：原文 + 日期/数字的等价写法展开 + 每个 CJK 连续段的单字、双字与分词结果；同时记录同一次 add 内前后各 3 条消息的正文作为邻居文本。
-2. **词法检索**：FTS5 上的 BM25（`search_text` 权重 1.0、`neighbor_text` 0.5、`role` 0.2）；先 AND 再 OR 补齐名额。
+2. **词法检索**：FTS5 上的 BM25（`search_text` 权重 1.0、`nearby_text` 0.5、`role` 0.2）；先 AND 再 OR 补齐名额。
 3. **子串检索**：trigram 索引覆盖分词切不中的片段；候选深度只有 `max(1, int(top_k × 0.5))`（`Policy.substring_depth_ratio`），而词法/向量通道为 `max(top_k, 200)`。
 4. **向量检索（必需）**：Add 时先调 embedding 服务，成功后才把消息和 float32 向量在同一事务里写入（`message_vectors`）；Search 时对 query 调同一服务，按 `user_id` + `space` 做余弦相似度取候选。
 5. **查询门控（可选，默认关闭）**：开启 `Policy(lane_gating=True)` 后，按 query 形态选 `dense` / `hybrid` / `literal` 三条车道。`dense` 只跑向量路；`hybrid` 三路都跑并放大词法权重；`literal` 只跑词法与子串。门控只看 query 本身（引号、代码/ID、日期/数字、短实体问句、词数、问句结构），阈值在 `app/gating.py` 的 `GateConfig`。默认质量优先走等权三路。
