@@ -36,12 +36,6 @@ NAME = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
 NUMBER = re.compile(r"(?<![\w.])\d{2,}(?![\w.])")
 CJK = re.compile(r"[\u3400-\u9fff]")
 OPTION_LINE = re.compile(r"(?m)(?:^|\s)([A-F])[.)]\s+\S")
-INSTRUCTION = re.compile(
-    r"\b(?:use only|return all|return one|return the|output|please provide|respond with|"
-    r"format|json array|do not explain|no explanation|enclose|following|answer the)\b"
-    r"|(?:仅使用|返回|输出|格式|不要解释|请提供|以下)",
-    re.I,
-)
 QSTART = re.compile(
     r"^\s*(?:what|who|when|where|which|why|how|is|are|was|were|did|does|do|"
     r"can|could|would|should|will|has|have|had|tell|list|give|find|show)\b",
@@ -84,6 +78,24 @@ class QueryProfile:
     signals: tuple[str, ...]
 
 
+def query_segments(
+    query: str, config: GateConfig = DEFAULT_GATE, max_segments: int = 3
+) -> list[str]:
+    if len(OPTION_LINE.findall(query)) >= 2:
+        return [query]
+    blocks = [block.strip() for block in re.split(r"\n\s*\n", query) if block.strip()]
+    if len(blocks) < 2:
+        return [query]
+    segments = [query]
+    for block in (blocks[0], blocks[-1]):
+        minimum = 4 if CJK.search(block) else config.core_query_min_chars
+        if len(block) < minimum or len(block) > config.core_query_max_chars:
+            continue
+        if block not in segments:
+            segments.append(block)
+    return segments[:max_segments]
+
+
 def core_query(query: str, config: GateConfig = DEFAULT_GATE) -> str | None:
     if len(OPTION_LINE.findall(query)) >= 2:
         return None
@@ -93,8 +105,6 @@ def core_query(query: str, config: GateConfig = DEFAULT_GATE) -> str | None:
     first = blocks[0]
     minimum = 4 if CJK.search(first) else config.core_query_min_chars
     if len(first) < minimum or len(first) > config.core_query_max_chars:
-        return None
-    if not INSTRUCTION.search("\n\n".join(blocks[1:])):
         return None
     return first
 

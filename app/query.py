@@ -9,11 +9,6 @@ _QUESTION_WORD = re.compile(
     r"can|could|please|请|问)\b",
     re.I,
 )
-_INSTRUCTION = re.compile(
-    r"(?:use only|return all|answer the following|based on the (?:document|text)|"
-    r"根据|请回答|仅使用)",
-    re.I,
-)
 _BOUNDARY = re.compile(r"[.!?。！？](?:\s|$)|\n")
 _WORD_END = re.compile(r"\s+\S*$")
 _WORD_START = re.compile(r"^\s*\S+\s+")
@@ -27,8 +22,6 @@ def _line_score(line: str, index: int, last: int) -> int:
     if _QUESTION_START.search(line):
         score += 3
     if _QUESTION_WORD.search(line):
-        score += 2
-    if _INSTRUCTION.search(line):
         score += 2
     if index == last:
         score += 1

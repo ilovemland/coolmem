@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from app.embedding import blob_to_vector, vector_to_blob
 from app.errors import PayloadConflict
 from app.rerank import RerankClient as Reranker, RerankError
-from app.gating import DENSE, HYBRID, LITERAL, core_query, profile_query
+from app.gating import DENSE, HYBRID, LITERAL, core_query, profile_query, query_segments
 from app.normalize import expanded_text
 from app.query import clip_query
 from app.policy import Policy
@@ -300,13 +300,12 @@ class MessageRepository:
                 pool = max(limit, depth)
         hits = self._search_once(user_id=user_id, query=query, limit=pool)
         if self._policy.instruction_decomposition:
-            core = core_query(query, self._policy.gate)
-            if core is not None and core != query:
-                core_hits = self._search_once(user_id=user_id, query=core, limit=pool)
-                if hits and core_hits:
-                    hits = self._merge(hits, core_hits, pool)
-                elif core_hits:
-                    hits = core_hits
+            for segment in query_segments(query, self._policy.gate)[1:]:
+                segment_hits = self._search_once(user_id=user_id, query=segment, limit=pool)
+                if hits and segment_hits:
+                    hits = self._merge(hits, segment_hits, pool)
+                elif segment_hits:
+                    hits = segment_hits
         core = core_query(query, self._policy.gate)
         if self._policy.rerank_context:
             hits = self._expand_neighbors(user_id, hits)
