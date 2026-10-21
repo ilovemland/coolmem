@@ -57,6 +57,7 @@ def search_messages(
     service: SearchServiceDep,
 ) -> SearchResponse:
     results = service.search(
+        options=payload.options,
         user_id=payload.user_id,
         query=payload.query,
         top_k=payload.top_k,
