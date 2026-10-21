@@ -109,3 +109,24 @@ class RepositoryRerankTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReturnClipTest(unittest.TestCase):
+    def test_clip_keeps_head_and_tail(self) -> None:
+        from app.services.search import _clip
+
+        text = "a" * 3000 + "TAIL"
+        clipped = _clip(text, 100)
+        self.assertEqual(len(clipped), 100 + len("\n...\n"))
+        self.assertTrue(clipped.startswith("a" * 75))
+        self.assertTrue(clipped.endswith("TAIL"))
+
+    def test_clip_is_off_by_default(self) -> None:
+        from app.policy import Policy
+
+        self.assertEqual(Policy().max_return_chars, 0)
+
+    def test_body_limit_allows_long_documents(self) -> None:
+        from app.settings import Settings
+
+        self.assertGreaterEqual(Settings(bearer_token="x" * 32).max_body_bytes, 4_000_000)

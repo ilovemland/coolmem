@@ -37,7 +37,7 @@ class Settings:
     port: int = 8005
     data_dir: Path = Path("data")
     db_path: Path | None = None
-    max_body_bytes: int = 1_000_000
+    max_body_bytes: int = 4_000_000
     bearer_token: str = field(default="", repr=False)
 
     def __post_init__(self) -> None:

@@ -1,12 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.embedding import EmbeddingError
 from app.errors import InvalidInput, Unavailable
 from app.policy import Policy
 from app.retrieval import Message
 from app.storage.repository import MessageRepository
+
+
+def _clip(content: str, limit: int) -> str:
+    if limit <= 0 or len(content) <= limit:
+        return content
+    tail = limit // 4
+    head = limit - tail
+    return content[:head] + "\n...\n" + content[-tail:]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,9 +51,10 @@ class SearchService:
             return []
 
         best = hits[0].score
+        budget = max(0, int(self._policy.max_return_chars))
         results = [
             SearchResult(
-                message=hit.message,
+                message=replace(hit.message, content=_clip(hit.message.content, budget)),
                 score=round(hit.score / best, 6) if best > 0 else 0.0,
             )
             for hit in hits

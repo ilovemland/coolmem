@@ -47,7 +47,7 @@ printf '%s\n' '你的固定字符串' > env
 chmod 600 env
 ```
 
-数据目录固定为工作目录下的 `./data`（SQLite 文件 `data/coolmem.sqlite3`），请求体大小上限 1,000,000 字节，两者都不通过环境变量修改。
+数据目录固定为工作目录下的 `./data`（SQLite 文件 `data/coolmem.sqlite3`），请求体大小上限 4,000,000 字节，两者都不通过环境变量修改。
 
 ### Embedding（必需）
 
@@ -75,6 +75,8 @@ Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任�
 - `timeout_seconds` / `retries` / `batch_size`：HTTP 超时、重试与单次请求的文档条数。
 - `failure_threshold` / `cooldown_seconds`：连续失败几次后熔断、熔断多久（默认 3 次 / 60 秒）；熔断期间 `/search` 直接走纯 RRF，不再等待精排。
 - `api_key_env`：可选，填环境变量名。
+
+返回条目的长度截断由 `Policy.max_return_chars` 控制（默认 0 = 不截断）：开启后超长条目保留头部 3/4 与尾部 1/4，中间以 `...` 省略。短条目不受影响；它只改返回正文，不改索引与排序。
 
 精排失败（服务不可达、返回结构不符）时**自动降级为原排序**，`/search` 不会因此失败。精排深度、混合权重与文档截断由 `Policy` 的 `rerank_depth` / `rerank_blend` / `rerank_doc_chars` 控制（默认 200 / 1.0 / 2400）；`rerank_blend=1.0` 表示完全按精排分数排序。
 
