@@ -8,6 +8,7 @@ version = "0.10.0"
 description = "Add/Search memory service (FastAPI + SQLite)"
 requires-python = ">=3.12"
 dependencies = [
+  "numpy>=2.0",
   "fastapi>=0.115,<1",
   "pydantic>=2.8,<3",
   "uvicorn[standard]>=0.30,<1",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
@@ -17,6 +18,10 @@ from app.text import ms_to_iso, utc_now
 from app.timefmt import format_time
 
 _ROLES = frozenset({"user", "assistant"})
+
+
+def _content_digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,12 +80,26 @@ class AddService:
         now = utc_now()
         rows = [self._prepare(index, message, now) for index, message in enumerate(messages)]
         self._attach_context(rows)
-        try:
-            vectors = self._embedding.embed_documents([row.render() for row in rows])
-        except (EmbeddingError, ValueError) as exc:
-            raise Unavailable("embedding service is unavailable") from exc
-        if len(vectors) != len(rows):
-            raise Unavailable("embedding service returned an invalid result")
+        texts = [row.render() for row in rows]
+        digests = [_content_digest(text) for text in texts]
+        space = self._embedding.space
+        dimension = self._embedding.dimension
+        cached = self._repo.cached_vectors(space, digests, dimension)
+        missing = [index for index, digest in enumerate(digests) if digest not in cached]
+        if missing:
+            try:
+                fresh = self._embedding.embed_documents([texts[index] for index in missing])
+            except (EmbeddingError, ValueError) as exc:
+                raise Unavailable("embedding service is unavailable") from exc
+            if len(fresh) != len(missing):
+                raise Unavailable("embedding service returned an invalid result")
+            self._repo.store_vectors(
+                space,
+                [(digests[index], vector) for index, vector in zip(missing, fresh, strict=True)],
+            )
+            for index, vector in zip(missing, fresh, strict=True):
+                cached[digests[index]] = vector
+        vectors = [cached[digest] for digest in digests]
         result = self._repo.insert_many(
             request_id=request_id,
             user_id=user_id,

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import heapq
 import math
+
+import numpy
 import sqlite3
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
@@ -33,6 +36,32 @@ from app.retrieval import (
 )
 from app.storage.database import Database
 from app.text import utc_now
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class VectorCache:
+    def __init__(self, capacity: int = 4) -> None:
+        self._items: OrderedDict[tuple[str, str, int], tuple[list[Message], numpy.ndarray]] = OrderedDict()
+        self._capacity = max(1, capacity)
+
+    def get(self, key: tuple[str, str, int]):
+        item = self._items.get(key)
+        if item is not None:
+            self._items.move_to_end(key)
+        return item
+
+    def put(self, key: tuple[str, str, int], value) -> None:
+        self._items[key] = value
+        self._items.move_to_end(key)
+        while len(self._items) > self._capacity:
+            self._items.popitem(last=False)
+
+    def forget(self, user_id: str) -> None:
+        for key in [key for key in self._items if key[0] == user_id]:
+            del self._items[key]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +96,7 @@ class MessageRepository:
         self._db = database
         self._policy = policy
         self._reranker = reranker
+        self._vectors = VectorCache()
         if retrievers is None:
             if embedding is None:
                 raise ValueError("embedding is required")
@@ -172,6 +202,7 @@ class MessageRepository:
                         )
                 else:
                     skipped += 1
+            self._vectors.forget(user_id)
             return InsertResult(ids=ids, skipped=skipped)
 
     @staticmethod
@@ -234,7 +265,24 @@ class MessageRepository:
     ) -> list[ScoredHit]:
         if limit <= 0 or not query_vector:
             return []
-        dimension = len(query_vector)
+        entry = self._vector_entry(user_id, space, len(query_vector))
+        if entry is None:
+            return []
+        messages, matrix, identities = entry
+        scores = matrix @ numpy.asarray(query_vector, dtype=numpy.float64)
+        width = min(limit, len(messages))
+        if width <= 0:
+            return []
+        order = numpy.lexsort((identities, -scores))[:width]
+        return [ScoredHit(message=messages[int(index)], raw=float(scores[index])) for index in order]
+
+    def _vector_entry(
+        self, user_id: str, space: str, dimension: int
+    ) -> tuple[list[Message], numpy.ndarray] | None:
+        key = (user_id, space, dimension)
+        cached = self._vectors.get(key)
+        if cached is not None:
+            return cached
         rows = self._db.connection().execute(
             """
             SELECT messages.id, messages.request_id, messages.session_id, messages.role,
@@ -245,34 +293,106 @@ class MessageRepository:
              WHERE messages.user_id = ? AND message_vectors.space = ?
             """,
             (user_id, space),
-        )
-        heap: list[tuple[float, int, Message]] = []
+        ).fetchall()
+        messages: list[Message] = []
+        vectors: list[numpy.ndarray] = []
         for row in rows:
             if int(row["dimension"]) != dimension:
                 continue
             blob = row["vector"]
-            if not isinstance(blob, (bytes, bytearray)):
+            if not isinstance(blob, (bytes, bytearray)) or len(blob) != dimension * 4:
                 continue
-            try:
-                vector = blob_to_vector(bytes(blob), dimension)
-            except ValueError:
-                continue
-            score = sum(a * b for a, b in zip(query_vector, vector, strict=True))
-            message = Message(
-                id=int(row["id"]),
-                request_id=str(row["request_id"]),
-                session_id=str(row["session_id"]),
-                role=str(row["role"]),
-                content=str(row["content"]),
-                created_at=str(row["created_at"]),
+            vectors.append(numpy.frombuffer(bytes(blob), dtype=numpy.float32))
+            messages.append(
+                Message(
+                    id=int(row["id"]),
+                    request_id=str(row["request_id"]),
+                    session_id=str(row["session_id"]),
+                    role=str(row["role"]),
+                    content=str(row["content"]),
+                    created_at=str(row["created_at"]),
+                )
             )
-            entry = (score, message.id, message)
-            if len(heap) < limit:
-                heapq.heappush(heap, entry)
-            elif score > heap[0][0]:
-                heapq.heapreplace(heap, entry)
-        ordered = sorted(heap, key=lambda item: (-item[0], item[1]))
-        return [ScoredHit(message=item[2], raw=item[0]) for item in ordered]
+        if not vectors:
+            return None
+        entry = (
+            messages,
+            numpy.stack(vectors).astype(numpy.float64),
+            numpy.array([message.id for message in messages], dtype=numpy.int64),
+        )
+        self._vectors.put(key, entry)
+        return entry
+
+    def cached_vectors(
+        self, space: str, hashes: Sequence[str], dimension: int
+    ) -> dict[str, list[float]]:
+        if not hashes or self._db is None or dimension <= 0:
+            return {}
+        found: dict[str, list[float]] = {}
+        connection = self._db.connection()
+        marks = ",".join("?" for _ in hashes)
+        rows = connection.execute(
+            f"SELECT content_hash, vector, dimension FROM embedding_cache "
+            f"WHERE space = ? AND content_hash IN ({marks})",
+            (space, *hashes),
+        ).fetchall()
+        for row in rows:
+            if int(row["dimension"]) != dimension:
+                continue
+            blob = row["vector"]
+            if not isinstance(blob, (bytes, bytearray)) or len(blob) != dimension * 4:
+                continue
+            found[str(row["content_hash"])] = list(
+                numpy.frombuffer(bytes(blob), dtype=numpy.float32)
+            )
+        return found
+
+    def store_vectors(
+        self,
+        space: str,
+        entries: Sequence[tuple[str, Sequence[float]]],
+    ) -> None:
+        if not entries or self._db is None:
+            return
+        now = utc_now()
+        with self._db.transaction() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO embedding_cache "
+                "(space, content_hash, dimension, vector, created_at) VALUES (?, ?, ?, ?, ?)",
+                [
+                    (space, digest, len(vector), vector_to_blob(vector), now)
+                    for digest, vector in entries
+                ],
+            )
+
+    def cached_rerank(
+        self, model: str, query_hash: str, document_hashes: Sequence[str]
+    ) -> dict[str, float]:
+        if not document_hashes or self._db is None:
+            return {}
+        marks = ",".join("?" for _ in document_hashes)
+        rows = self._db.connection().execute(
+            f"SELECT document_hash, score FROM rerank_cache "
+            f"WHERE model = ? AND query_hash = ? AND document_hash IN ({marks})",
+            (model, query_hash, *document_hashes),
+        ).fetchall()
+        return {str(row["document_hash"]): float(row["score"]) for row in rows}
+
+    def store_rerank(
+        self,
+        model: str,
+        query_hash: str,
+        entries: Sequence[tuple[str, float]],
+    ) -> None:
+        if not entries or self._db is None:
+            return
+        now = utc_now()
+        with self._db.transaction() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO rerank_cache "
+                "(model, query_hash, document_hash, score, created_at) VALUES (?, ?, ?, ?, ?)",
+                [(model, query_hash, digest, score, now) for digest, score in entries],
+            )
 
     def count(self) -> int:
         row = self._db.connection().execute("SELECT COUNT(*) AS n FROM messages").fetchone()
@@ -303,12 +423,27 @@ class MessageRepository:
         head = list(hits[:depth])
         tail = list(hits[depth:])
         documents = [hit.message.content[:RERANK_DOC_CHARS] for hit in head]
-        try:
-            raw = self._reranker.rerank(core or query, documents)
-        except RerankError:
-            return list(hits)
-        if len(raw) != len(head):
-            return list(hits)
+        target = core or query
+        query_hash = _digest(target)
+        document_hashes = [_digest(document) for document in documents]
+        model = f"{getattr(self._reranker, 'model', '')}|{RERANK_DOC_CHARS}|{RERANK_DEPTH}"
+        cached = self.cached_rerank(model, query_hash, document_hashes)
+        missing = [index for index, digest in enumerate(document_hashes) if digest not in cached]
+        if missing:
+            try:
+                fresh = self._reranker.rerank(target, [documents[index] for index in missing])
+            except RerankError:
+                return list(hits)
+            if len(fresh) != len(missing):
+                return list(hits)
+            self.store_rerank(
+                model,
+                query_hash,
+                [(document_hashes[index], value) for index, value in zip(missing, fresh, strict=True)],
+            )
+            for index, value in zip(missing, fresh, strict=True):
+                cached[document_hashes[index]] = float(value)
+        raw = [cached[digest] for digest in document_hashes]
         weights = [1.0 / (1.0 + math.exp(-max(-40.0, min(40.0, value)))) for value in raw]
         order = sorted(
             range(len(head)), key=lambda index: (-weights[index], head[index].message.id)

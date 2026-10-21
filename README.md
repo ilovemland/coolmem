@@ -62,7 +62,9 @@ chmod 600 env
 - `api_key_env`：可选，填环境变量名，不要填 key 本身；需要鉴权的服务在环境里设置该变量。
 - `tiebreak_weight`：dense 分数参与 RRF 同分裁决的权重，默认 0。
 
-向量按 `(message_id, space)` 存进 SQLite；`space` 由 model、dimension、query/document 模板哈希得到。换模型或模板后旧向量不会被误用；旧数据需要重新写入/回填后才能被检索到。
+向量按 `(message_id, space)` 存进 SQLite；`space` 由 model、dimension、query/document 模板哈希得到。
+
+写入时还会按 `(space, sha256(渲染文本))` 查一份**跨 scope 的向量缓存**（`embedding_cache` 表）：同一段文本在另一个 `user_id`/`request_id` 下重复写入时直接复用已有向量，不再调用 embedding 服务。实测 1,138 条消息首次写入 39.5s，换新 scope 重写 **0.4s**（命中率 100%）。缓存表只增不删，换 embedding 模型（新的 `space`）自然隔离。换模型或模板后旧向量不会被误用；旧数据需要重新写入/回填后才能被检索到。
 
 Embedding 不可用时：`/add` 返回 503 `service_unavailable`，不写入任何消息或向量；`/search` 返回 503；不会退化为纯词法。错误响应不包含 query、message、URL 或模板。
 

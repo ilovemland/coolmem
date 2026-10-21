@@ -161,6 +161,7 @@ class EmbeddingRequiredTest(unittest.TestCase):
         class FailingEmbedding:
             space = "x"
             model = "m"
+            dimension = 4
 
             def embed_documents(self, texts):
                 raise EmbeddingError("down")
