@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
+import os
 import re
 import uuid
 
@@ -15,6 +17,76 @@ logger = logging.getLogger("uvicorn.error")
 
 _TRACE_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 _HEALTH_PATHS = frozenset({"/health", "/health/"})
+_LOG_BODY = os.environ.get("COOLMEM_LOG_BODY", "1") != "0"
+_BODY_CAP = 64 * 1024 * 1024
+_TEXT_PREVIEW = 180
+_MSG_PREVIEW = 2
+
+
+def _summarize(raw: bytes) -> str:
+    if not raw:
+        return "body=-"
+    try:
+        payload = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return f"body=<unparsed {len(raw)}B>"
+    if not isinstance(payload, dict):
+        return f"body=<non-object {len(raw)}B>"
+    parts = [f"bytes={len(raw)}"]
+    for key in ("request_id", "user_id", "session_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            parts.append(f"{key}={value}")
+    if isinstance(payload.get("query"), str):
+        query = " ".join(payload["query"].split())[:_TEXT_PREVIEW]
+        parts.append(f"query={query!r}")
+    if isinstance(payload.get("options"), list):
+        parts.append(f"options={len(payload['options'])}")
+    if isinstance(payload.get("top_k"), int):
+        parts.append(f"top_k={payload['top_k']}")
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        parts.append(f"messages={len(messages)}")
+        for index, message in enumerate(messages[:_MSG_PREVIEW]):
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role", "?")
+            content = " ".join(str(message.get("content", "")).split())[:80]
+            parts.append(f"m{index}[{role}]={content!r}")
+        if len(messages) > _MSG_PREVIEW:
+            parts.append(f"...+{len(messages) - _MSG_PREVIEW}")
+    return " ".join(parts)
+
+
+async def _read_body(receive):
+    chunks: list[bytes] = []
+    size = 0
+    while True:
+        message = await receive()
+        if message["type"] != "http.request":
+            return b"".join(chunks), message
+        chunk = message.get("body", b"")
+        size += len(chunk)
+        if size > _BODY_CAP:
+            return b"".join(chunks), message
+        chunks.append(chunk)
+        if not message.get("more_body"):
+            return b"".join(chunks), None
+
+
+def _replay(body: bytes, tail):
+    sent = False
+
+    async def receive() -> Message:
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        if tail is not None:
+            return tail
+        return {"type": "http.disconnect"}
+
+    return receive
 
 
 class RequestContextMiddleware:
@@ -31,6 +103,11 @@ class RequestContextMiddleware:
         scope.setdefault("state", {})["trace_id"] = trace_id
 
         status_code = 500
+        summary = ""
+        if _LOG_BODY and scope.get("method") == "POST":
+            body, tail = await _read_body(receive)
+            receive = _replay(body, tail)
+            summary = _summarize(body)
 
         async def send_with_trace_id(message: Message) -> None:
             nonlocal status_code
@@ -43,10 +120,12 @@ class RequestContextMiddleware:
             await self.app(scope, receive, send_with_trace_id)
         finally:
             logger.info(
-                "%s %s %d",
+                "%s %s %d trace=%s %s",
                 scope.get("method", "-"),
                 scope.get("path", "-"),
                 status_code,
+                trace_id,
+                summary,
             )
 
 
