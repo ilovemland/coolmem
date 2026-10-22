@@ -13,7 +13,7 @@ from pathlib import Path
 
 logger = logging.getLogger("uvicorn.error")
 
-_SCHEMA_VERSION = 14
+_SCHEMA_VERSION = 15
 
 _DDL_V1: tuple[str, ...] = (
     """
@@ -428,6 +428,16 @@ def _apply_v14(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+_DDL_V15: tuple[str, ...] = (
+    "ALTER TABLE profiles ADD COLUMN last_message_id INTEGER NOT NULL DEFAULT 0",
+)
+
+
+def _apply_v15(conn: sqlite3.Connection) -> None:
+    for statement in _DDL_V15:
+        conn.execute(statement)
+
+
 _MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _apply_v1,
     _apply_v2,
@@ -443,6 +453,7 @@ _MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _apply_v12,
     _apply_v13,
     _apply_v14,
+    _apply_v15,
 )
 
 
