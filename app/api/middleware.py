@@ -19,8 +19,8 @@ _TRACE_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 _HEALTH_PATHS = frozenset({"/health", "/health/"})
 _LOG_BODY = os.environ.get("COOLMEM_LOG_BODY", "1") != "0"
 _BODY_CAP = 64 * 1024 * 1024
-_TEXT_PREVIEW = 180
-_MSG_PREVIEW = 2
+_TEXT_PREVIEW = int(os.environ.get("COOLMEM_LOG_TEXT_CHARS", "0"))
+_MSG_PREVIEW = int(os.environ.get("COOLMEM_LOG_MSG_COUNT", "0"))
 
 
 def _summarize(raw: bytes) -> str:
@@ -38,7 +38,9 @@ def _summarize(raw: bytes) -> str:
         if isinstance(value, str) and value:
             parts.append(f"{key}={value}")
     if isinstance(payload.get("query"), str):
-        query = " ".join(payload["query"].split())[:_TEXT_PREVIEW]
+        query = payload["query"]
+        if _TEXT_PREVIEW > 0:
+            query = query[:_TEXT_PREVIEW]
         parts.append(f"query={query!r}")
     if isinstance(payload.get("options"), list):
         parts.append(f"options={len(payload['options'])}")
@@ -47,13 +49,19 @@ def _summarize(raw: bytes) -> str:
     messages = payload.get("messages")
     if isinstance(messages, list):
         parts.append(f"messages={len(messages)}")
-        for index, message in enumerate(messages[:_MSG_PREVIEW]):
+        shown = messages if _MSG_PREVIEW <= 0 else messages[:_MSG_PREVIEW]
+        for index, message in enumerate(shown):
             if not isinstance(message, dict):
+                parts.append(f"m{index}=<non-object>")
                 continue
             role = message.get("role", "?")
-            content = " ".join(str(message.get("content", "")).split())[:80]
-            parts.append(f"m{index}[{role}]={content!r}")
-        if len(messages) > _MSG_PREVIEW:
+            content = str(message.get("content", ""))
+            if _TEXT_PREVIEW > 0:
+                content = content[:_TEXT_PREVIEW]
+            stamp = message.get("timestamp")
+            label = f"m{index}[{role}]" + (f"@{stamp}" if stamp is not None else "")
+            parts.append(f"{label}={content!r}")
+        if _MSG_PREVIEW > 0 and len(messages) > _MSG_PREVIEW:
             parts.append(f"...+{len(messages) - _MSG_PREVIEW}")
     return " ".join(parts)
 
