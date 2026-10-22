@@ -3,14 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.embedding import EmbeddingClient, load_embedding_config
-import os
-
 from app.policy import Policy
-
-PROFILE_ENABLED = os.environ.get("COOLMEM_PROFILE", "0") != "0"
 from app.rerank import RerankClient, load_rerank_config
 from app.services.add import AddService
-from app.services.profile import ProfileService
 from app.services.search import SearchService
 from app.settings import Settings
 from app.storage.database import Database
@@ -27,7 +22,6 @@ class Container:
     search: SearchService
     embedding: EmbeddingClient
     reranker: RerankClient | None = None
-    profile: ProfileService | None = None
 
     @classmethod
     def build(cls, settings: Settings, policy: Policy) -> Container:
@@ -44,17 +38,15 @@ class Container:
         repository = MessageRepository(
             database, policy, embedding=embedding, reranker=reranker
         )
-        profile = ProfileService(database) if PROFILE_ENABLED else None
         return cls(
             settings=settings,
             policy=policy,
             database=database,
             repository=repository,
-            add=AddService(repository, policy, embedding=embedding, profile=profile),
-            search=SearchService(repository, policy, profile=profile),
+            add=AddService(repository, policy, embedding=embedding),
+            search=SearchService(repository, policy),
             embedding=embedding,
             reranker=reranker,
-            profile=profile,
         )
 
     def close(self) -> None:
