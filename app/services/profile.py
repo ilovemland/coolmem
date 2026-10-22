@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -17,6 +18,7 @@ PROFILE_EVERY = int(os.environ.get("COOLMEM_PROFILE_EVERY", "8"))
 PROFILE_WINDOW = int(os.environ.get("COOLMEM_PROFILE_WINDOW", "200"))
 PROFILE_TIMEOUT = float(os.environ.get("COOLMEM_PROFILE_TIMEOUT", "30"))
 PROFILE_CONCURRENCY = int(os.environ.get("COOLMEM_PROFILE_CONCURRENCY", "2"))
+PROFILE_WAIT = float(os.environ.get("COOLMEM_PROFILE_WAIT", "10"))
 PROFILE_URL = os.environ.get("COOLMEM_PROFILE_URL", "https://api.xingdingwangluo.cn/v1/chat/completions")
 PROFILE_MODEL = os.environ.get("COOLMEM_PROFILE_MODEL", "gpt-6-luna")
 PROFILE_KEY_ENV = os.environ.get("COOLMEM_PROFILE_KEY_ENV", "")
@@ -51,13 +53,24 @@ class ProfileService:
         self._pending: set[str] = set()
         self._slots = threading.Semaphore(max(1, PROFILE_CONCURRENCY))
 
-    def get(self, user_id: str) -> str | None:
+    def get(self, user_id: str, wait: float | None = None) -> str | None:
+        budget = PROFILE_WAIT if wait is None else wait
+        if budget > 0 and self._is_pending(user_id):
+            deadline = time.monotonic() + budget
+            while time.monotonic() < deadline and self._is_pending(user_id):
+                time.sleep(0.05)
         row = (
             self._db.connection()
-            .execute("SELECT content FROM profiles WHERE user_id = ?", (user_id,))
+            .execute(
+                "SELECT content, last_message_id FROM profiles WHERE user_id = ?", (user_id,)
+            )
             .fetchone()
         )
         return str(row["content"]) if row and row["content"] else None
+
+    def _is_pending(self, user_id: str) -> bool:
+        with self._guard:
+            return user_id in self._pending
 
     def _state(self, user_id: str) -> tuple[str, int]:
         row = (
