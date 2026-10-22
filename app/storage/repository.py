@@ -16,8 +16,11 @@ from app.rerank import RerankClient as Reranker, RerankError
 from app.gating import core_query, query_segments
 from app.normalize import expanded_text
 from app.query import clip_query
+from datetime import datetime, UTC
+
 from app.policy import (
     CHANNEL_QUOTAS,
+    RECENCY_LAMBDA,
     RERANK_DEPTH,
     RERANK_DOC_CHARS,
     SEARCH_CANDIDATES,
@@ -83,6 +86,13 @@ class InsertResult:
     ids: list[int]
     skipped: int
 
+
+
+def _created_epoch(value: str) -> float:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        return 0.0
 
 class MessageRepository:
     def __init__(
@@ -415,7 +425,23 @@ class MessageRepository:
                 elif segment_hits:
                     hits = segment_hits
         hits = self._rerank(query, hits, core_query(query))
+        hits = self._apply_recency(hits)
         return hits[:limit]
+
+    def _apply_recency(self, hits: Sequence[SearchHit]) -> list[SearchHit]:
+        lam = RECENCY_LAMBDA
+        if lam <= 0 or len(hits) < 2:
+            return list(hits)
+        stamps = [_created_epoch(hit.message.created_at) for hit in hits]
+        order = sorted(range(len(stamps)), key=lambda index: (stamps[index], index))
+        span = len(stamps) - 1
+        rank = [0.0] * len(stamps)
+        for position, index in enumerate(order):
+            rank[index] = position / span
+        return [
+            SearchHit(message=hit.message, score=hit.score + lam * rank[index])
+            for index, hit in enumerate(hits)
+        ]
 
     def _rerank(
         self, query: str, hits: Sequence[SearchHit], core: str | None = None

@@ -76,12 +76,14 @@ class AddService:
         repository: MessageRepository,
         policy: Policy,
         embedding: EmbeddingClient,
+        profile=None,
     ) -> None:
         if embedding is None:
             raise ValueError("embedding is required")
         self._repo = repository
         self._policy = policy
         self._embedding = embedding
+        self._profile = profile
 
     def add(
         self,
@@ -156,6 +158,8 @@ class AddService:
             space=self._embedding.space,
             model=self._embedding.model,
         )
+        if self._profile is not None and result.ids:
+            self._profile.maybe_refresh(user_id)
         return AddResult(inserted=len(result.ids), skipped=result.skipped)
 
     def _attach_context(self, rows: list[NewMessage]) -> None:

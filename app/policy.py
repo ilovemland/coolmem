@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 MAX_MESSAGES_PER_ADD = 500
@@ -13,6 +14,7 @@ CHANNEL_QUOTAS = (("dense", 0.80), ("lexical", 0.15), ("substring", 0.05))
 SEARCH_CANDIDATES = 200
 SUBSTRING_DEPTH_RATIO = 0.5
 
+RECENCY_LAMBDA = float(os.environ.get("COOLMEM_RECENCY_LAMBDA", "0.0"))
 RERANK_DEPTH = 100
 RERANK_DOC_CHARS = 2_400
 

@@ -49,7 +49,11 @@ class SearchItemOut(BaseModel):
     @classmethod
     def from_domain(cls, result: SearchResultDomain) -> SearchItemOut:
         return cls(
-            id=f"mem_{result.message.id}",
+            id=(
+                f"profile:{result.message.session_id}"
+                if result.message.request_id == "profile"
+                else f"mem_{result.message.id}"
+            ),
             content=result.message.content,
             score=result.score,
             created_at=result.message.created_at,
